@@ -1,0 +1,31 @@
+# Xcode
+#
+# gitignore contributors: guess why build/ is commented to ease user experience
+# build/
+
+# User settings
+xcuserdata/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Xcode temporary / derived files
+*.xcuserstate
+*.xcscmblueprint
+DerivedData/
+
+# Package dependencies
+.build/
+Packages/
+Package.pins
+Package.resolved
+
+# App test results / coverage
+*.xcresult/
+*.coveragexml
