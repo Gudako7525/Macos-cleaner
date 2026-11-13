@@ -2,7 +2,7 @@
 //  SecureListenerDelegate.swift
 //  com.cleaner.helper
 //
-//  Authenticates incoming NSXPCConnection requests via SecCodeCopyGuestWithProcessIdentifier.
+//  Authenticates incoming NSXPCConnection requests via SecCodeCopyGuestWithAttributes.
 //
 
 import Foundation
@@ -11,7 +11,7 @@ import os.log
 
 public final class SecureListenerDelegate: NSObject, NSXPCListenerDelegate {
     private let logger = Logger(subsystem: "com.cleaner.helper", category: "SecureListener")
-    
+
     // In production, update TEAMID1234 to your Developer Account Team ID
     private let expectedRequirement = "anchor apple generic and identifier \"com.cleaner.app\" and certificate leaf[subject.OU] = \"TEAMID1234\""
 
@@ -23,18 +23,18 @@ public final class SecureListenerDelegate: NSObject, NSXPCListenerDelegate {
         }
         #endif
 
+        let daemonImpl = CleanerDaemonImplementation()
         connection.exportedInterface = NSXPCInterface(with: CleanerDaemonProtocol.self)
-        connection.exportedObject = CleanerDaemonImplementation()
-        
+        connection.exportedObject = daemonImpl
         connection.remoteObjectInterface = NSXPCInterface(with: CleanerClientProgressProtocol.self)
-        
+
         connection.invalidationHandler = {
-            // Clean up resources on disconnect
+            daemonImpl.clearProgressDelegate()
         }
         connection.interruptionHandler = {
             // Transient interruption handler
         }
-        
+
         connection.resume()
         logger.info("Accepted secure connection from PID \(connection.processIdentifier)")
         return true
@@ -42,7 +42,15 @@ public final class SecureListenerDelegate: NSObject, NSXPCListenerDelegate {
 
     private func validateCodeSignature(for connection: NSXPCConnection) -> Bool {
         var guestSecCode: SecCode?
-        let status = SecCodeCopyGuestWithProcessIdentifier(nil, connection.processIdentifier, &guestSecCode)
+        let attributes: [CFString: Any] = [
+            kSecGuestAttributePid: connection.processIdentifier
+        ]
+        let status = SecCodeCopyGuestWithAttributes(
+            nil,
+            attributes as CFDictionary,
+            SecCSFlags(),
+            &guestSecCode
+        )
         guard status == errSecSuccess, let code = guestSecCode else {
             return false
         }

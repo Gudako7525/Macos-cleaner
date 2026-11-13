@@ -8,25 +8,38 @@
 import Foundation
 import AppKit
 
-public enum TCCAccessStatus {
+public enum TCCAccessStatus: Sendable {
     case granted
     case denied
 }
 
 public struct PrivacyPermissionCoordinator {
-    
-    /// Tests reading a protected TCC file path to determine if Full Disk Access is granted
+
+    /// Tests reading protected TCC paths to determine if Full Disk Access is granted
     public static func verifyFullDiskAccess() -> TCCAccessStatus {
-        let testPath = ("~/Library/Safari/CloudTabs.db" as NSString).expandingTildeInPath
         let fileManager = FileManager.default
-        
-        if fileManager.isReadableFile(atPath: testPath) {
-            return .granted
+        let candidatePaths = [
+            ("~/Library/Safari/Bookmarks.plist" as NSString).expandingTildeInPath,
+            ("~/Library/Safari/CloudTabs.db" as NSString).expandingTildeInPath,
+            ("~/Library/Messages/chat.db" as NSString).expandingTildeInPath,
+            ("/Library/Preferences/com.apple.TimeMachine.plist")
+        ]
+
+        for path in candidatePaths where fileManager.fileExists(atPath: path) {
+            if fileManager.isReadableFile(atPath: path) {
+                return .granted
+            } else {
+                return .denied
+            }
         }
-        
-        let alternativeTest = ("~/Library/Containers/com.apple.Safari/Data/Library/Preferences/com.apple.Safari.plist" as NSString).expandingTildeInPath
-        if fileManager.isReadableFile(atPath: alternativeTest) {
-            return .granted
+
+        // Fallback directory read probe in ~/Library/Mail
+        let mailPath = ("~/Library/Mail" as NSString).expandingTildeInPath
+        if fileManager.fileExists(atPath: mailPath) {
+            if (try? fileManager.contentsOfDirectory(atPath: mailPath)) != nil {
+                return .granted
+            }
+            return .denied
         }
 
         return .denied
@@ -35,6 +48,13 @@ public struct PrivacyPermissionCoordinator {
     /// Deep link to macOS System Settings -> Privacy & Security -> Full Disk Access
     public static func openSystemSettingsFullDiskAccess() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Deep link to macOS System Settings -> General -> Login Items & Extensions
+    public static func openSystemSettingsLoginItems() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
             NSWorkspace.shared.open(url)
         }
     }
