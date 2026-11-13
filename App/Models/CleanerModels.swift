@@ -31,8 +31,9 @@ public enum SidebarSection: String, CaseIterable, Identifiable, Sendable {
 }
 
 public enum JunkCategory: String, CaseIterable, Identifiable, Sendable {
+    case systemJunk = "System Cache & Logs"
     case userCaches = "User App Caches"
-    case applicationLogs = "Logs & Crash Reports"
+    case applicationLogs = "Crash Reports & User Logs"
     case browserCaches = "Browser Caches"
     case developerJunk = "Xcode & Developer Caches"
     case oldDownloads = "Old Installers in Downloads"
@@ -42,6 +43,7 @@ public enum JunkCategory: String, CaseIterable, Identifiable, Sendable {
 
     public var icon: String {
         switch self {
+        case .systemJunk: return "gearshape.2"
         case .userCaches: return "internaldrive"
         case .applicationLogs: return "doc.text.magnifyingglass"
         case .browserCaches: return "safari"
@@ -53,8 +55,9 @@ public enum JunkCategory: String, CaseIterable, Identifiable, Sendable {
 
     public var subtitle: String {
         switch self {
+        case .systemJunk: return "System caches (/Library/Caches), system logs (/Library/Logs, /var/log), and saved app states"
         case .userCaches: return "App-generated temporary cache folders in ~/Library/Caches"
-        case .applicationLogs: return "Diagnostic reports and logs in ~/Library/Logs"
+        case .applicationLogs: return "Diagnostic reports, crash reports, and logs in ~/Library/Logs"
         case .browserCaches: return "Cached web assets for Safari, Chrome, Firefox, and Arc"
         case .developerJunk: return "Xcode DerivedData, simulator caches, and SwiftPM caches"
         case .oldDownloads: return "Installer packages (.dmg, .pkg, .zip) older than 14 days"
@@ -64,7 +67,7 @@ public enum JunkCategory: String, CaseIterable, Identifiable, Sendable {
 
     public var defaultSelected: Bool {
         switch self {
-        case .userCaches, .applicationLogs, .browserCaches, .developerJunk, .userTrash:
+        case .systemJunk, .userCaches, .applicationLogs, .browserCaches, .developerJunk, .userTrash:
             return true
         case .oldDownloads:
             return false

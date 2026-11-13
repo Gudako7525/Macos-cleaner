@@ -15,34 +15,52 @@ public enum TCCAccessStatus: Sendable {
 
 public struct PrivacyPermissionCoordinator {
 
-    /// Tests reading protected TCC paths to determine if Full Disk Access is granted
+    /// Tests reading protected TCC directories and files to determine if Full Disk Access is granted.
     public static func verifyFullDiskAccess() -> TCCAccessStatus {
         let fileManager = FileManager.default
-        let candidatePaths = [
-            ("~/Library/Safari/Bookmarks.plist" as NSString).expandingTildeInPath,
-            ("~/Library/Safari/CloudTabs.db" as NSString).expandingTildeInPath,
-            ("~/Library/Messages/chat.db" as NSString).expandingTildeInPath,
-            ("/Library/Preferences/com.apple.TimeMachine.plist")
+        let home = fileManager.homeDirectoryForCurrentUser.path
+
+        // Probe TCC-protected directories via contentsOfDirectory / open(O_RDONLY)
+        let protectedDirectories = [
+            (home as NSString).appendingPathComponent("Library/Safari"),
+            (home as NSString).appendingPathComponent("Library/Mail"),
+            (home as NSString).appendingPathComponent("Library/Messages"),
+            (home as NSString).appendingPathComponent("Library/Cookies"),
+            "/Library/Application Support/com.apple.TCC"
         ]
 
-        for path in candidatePaths where fileManager.fileExists(atPath: path) {
-            if fileManager.isReadableFile(atPath: path) {
+        var testedAtLeastOne = false
+        for dirPath in protectedDirectories where fileManager.fileExists(atPath: dirPath) {
+            testedAtLeastOne = true
+            if (try? fileManager.contentsOfDirectory(atPath: dirPath)) != nil {
                 return .granted
-            } else {
-                return .denied
             }
         }
 
-        // Fallback directory read probe in ~/Library/Mail
-        let mailPath = ("~/Library/Mail" as NSString).expandingTildeInPath
-        if fileManager.fileExists(atPath: mailPath) {
-            if (try? fileManager.contentsOfDirectory(atPath: mailPath)) != nil {
+        // Probe TCC-protected files via low-level POSIX open()
+        let protectedFiles = [
+            (home as NSString).appendingPathComponent("Library/Safari/Bookmarks.plist"),
+            (home as NSString).appendingPathComponent("Library/Safari/CloudTabs.db"),
+            (home as NSString).appendingPathComponent("Library/Messages/chat.db"),
+            "/Library/Preferences/com.apple.TimeMachine.plist",
+            "/Library/Application Support/com.apple.TCC/TCC.db"
+        ]
+
+        for filePath in protectedFiles where fileManager.fileExists(atPath: filePath) {
+            testedAtLeastOne = true
+            let fd = open(filePath, O_RDONLY)
+            if fd >= 0 {
+                close(fd)
                 return .granted
             }
-            return .denied
         }
 
-        return .denied
+        return testedAtLeastOne ? .denied : .granted
+    }
+
+    /// Returns true if the app is currently running from Xcode DerivedData rather than /Applications
+    public static var isRunningFromDerivedData: Bool {
+        Bundle.main.bundleURL.path.contains("/DerivedData/")
     }
 
     /// Deep link to macOS System Settings -> Privacy & Security -> Full Disk Access

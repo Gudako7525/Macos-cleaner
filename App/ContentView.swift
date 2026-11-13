@@ -62,6 +62,9 @@ public struct ContentView: View {
             viewModel.telemetry.startPolling()
             viewModel.refreshPermissionsAndDaemon()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            viewModel.refreshPermissionsAndDaemon()
+        }
         .onDisappear {
             viewModel.telemetry.stopPolling()
         }

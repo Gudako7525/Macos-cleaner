@@ -108,7 +108,7 @@ struct DashboardView: View {
                         .font(.headline)
                     Spacer()
                     Button {
-                        Task { await viewModel.cleanRAM(allowAdminPrompt: true) }
+                        Task { await viewModel.cleanRAM(allowAdminPrompt: false) }
                     } label: {
                         if viewModel.isCleaningRAM {
                             ProgressView()
@@ -144,6 +144,7 @@ struct DashboardView: View {
                     LegendDot(color: .blue, label: "Active", value: ByteFormatter.format(mem.activeBytes))
                     LegendDot(color: .orange, label: "Wired", value: ByteFormatter.format(mem.wiredBytes))
                     LegendDot(color: .purple, label: "Compressed", value: ByteFormatter.format(mem.compressedBytes))
+                    LegendDot(color: .cyan, label: "Cached", value: ByteFormatter.format(mem.cachedFilesBytes))
                     Spacer()
                 }
                 .font(.caption)
@@ -234,7 +235,7 @@ struct DashboardView: View {
                 .buttonStyle(.bordered)
 
                 Button {
-                    Task { await viewModel.cleanRAM(allowAdminPrompt: true) }
+                    Task { await viewModel.cleanRAM(allowAdminPrompt: false) }
                 } label: {
                     Label(viewModel.isCleaningRAM ? "Cleaning RAM..." : "Free Up RAM", systemImage: "bolt.fill")
                         .frame(maxWidth: .infinity)
@@ -270,7 +271,9 @@ struct DashboardView: View {
                             .font(.subheadline.weight(.semibold))
                         Text(viewModel.fullDiskAccess == .granted
                              ? "Granted — SystemCleaner can inspect Safari, Mail, and protected app caches."
-                             : "Not granted — Some browser and protected caches may be hidden until enabled.")
+                             : (PrivacyPermissionCoordinator.isRunningFromDerivedData
+                                ? "Not granted — Note: You are running a debug build from Xcode. Grant Full Disk Access to /Applications/SystemCleaner.app and launch from /Applications."
+                                : "Not granted — Enable SystemCleaner in System Settings → Privacy & Security → Full Disk Access."))
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

@@ -60,6 +60,62 @@ public enum MaintenanceService {
         public let message: String
     }
 
+    /// Reclaims clean inactive/file-backed pages in user space without root or password prompts.
+    public static func reclaimUserSpaceMemory() async {
+        await Task.detached(priority: .userInitiated) {
+            malloc_zone_pressure_relief(nil, 0)
+
+            var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
+            var vmStats = vm_statistics64()
+            let kerr = withUnsafeMutablePointer(to: &vmStats) { pt in
+                pt.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPt in
+                    host_statistics64(mach_host_self(), HOST_VM_INFO64, intPt, &count)
+                }
+            }
+            guard kerr == KERN_SUCCESS else { return }
+
+            let pageSize = Int(vm_kernel_page_size)
+            let freeBytes = Int(vmStats.free_count) * pageSize
+            let inactiveBytes = Int(vmStats.inactive_count) * pageSize
+
+            // Target enough transient allocation to nudge the kernel pageout scanner to evict clean file cache
+            let targetBytes = freeBytes + Int(Double(inactiveBytes) * 0.65)
+            let chunkSize = 32 * 1024 * 1024
+            let numChunks = max(4, min(40, targetBytes / chunkSize))
+            var chunks: [UnsafeMutableRawPointer] = []
+            chunks.reserveCapacity(numChunks)
+
+            let wordsPerPageStep = max(1, pageSize / MemoryLayout<UInt64>.stride)
+            let totalWords = chunkSize / MemoryLayout<UInt64>.stride
+
+            for chunkIndex in 0..<numChunks {
+                guard let ptr = mmap(nil, chunkSize, PROT_READ | PROT_WRITE, MAP_ANON | MAP_PRIVATE, -1, 0),
+                      ptr != MAP_FAILED else {
+                    break
+                }
+                let wordPtr = ptr.assumingMemoryBound(to: UInt64.self)
+                var seed = UInt64(chunkIndex &+ 1) &* 0x9E3779B97F4A7C15
+                var idx = 0
+                while idx < totalWords {
+                    for j in 0..<min(8, wordsPerPageStep) {
+                        seed ^= seed >> 12
+                        seed ^= seed << 25
+                        seed ^= seed >> 27
+                        wordPtr[idx + j] = seed &* 0x2545F4914F6CDD1D
+                    }
+                    idx += wordsPerPageStep
+                }
+                chunks.append(ptr)
+            }
+
+            for ptr in chunks {
+                munmap(ptr, chunkSize)
+            }
+            chunks.removeAll()
+            malloc_zone_pressure_relief(nil, 0)
+        }.value
+    }
+
     public static func run(_ task: MaintenanceTaskInfo, allowAdminPromptFallback: Bool = true) async -> Outcome {
         let daemonEnabled = await MainActor.run { DaemonManager.shared.status == .enabled }
 

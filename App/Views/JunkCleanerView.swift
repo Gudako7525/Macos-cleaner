@@ -9,7 +9,7 @@ import SwiftUI
 
 struct JunkCleanerView: View {
     @ObservedObject var viewModel: CleanerViewModel
-    @State private var selectedCategory: JunkCategory? = .userCaches
+    @State private var selectedCategory: JunkCategory? = .systemJunk
     @State private var showCleanConfirmation = false
     @State private var searchText = ""
 

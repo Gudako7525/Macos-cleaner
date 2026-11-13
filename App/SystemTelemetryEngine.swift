@@ -28,6 +28,7 @@ public final class SystemTelemetryEngine: ObservableObject {
         public let activeBytes: UInt64
         public let wiredBytes: UInt64
         public let compressedBytes: UInt64
+        public let cachedFilesBytes: UInt64
         public let freeBytes: UInt64
         public let totalBytes: UInt64
 
@@ -36,6 +37,7 @@ public final class SystemTelemetryEngine: ObservableObject {
             activeBytes: 0,
             wiredBytes: 0,
             compressedBytes: 0,
+            cachedFilesBytes: 0,
             freeBytes: 0,
             totalBytes: 0
         )
@@ -239,12 +241,18 @@ public final class SystemTelemetryEngine: ObservableObject {
 
         let pageSize = UInt64(vm_kernel_page_size)
         let active = UInt64(vmStats.active_count) * pageSize
+        let inactive = UInt64(vmStats.inactive_count) * pageSize
         let wired = UInt64(vmStats.wire_count) * pageSize
         let speculative = UInt64(vmStats.speculative_count) * pageSize
         let compressor = UInt64(vmStats.compressor_page_count) * pageSize
+        let external = UInt64(vmStats.external_page_count) * pageSize
+        let purgeable = UInt64(vmStats.purgeable_count) * pageSize
 
         let total = ProcessInfo.processInfo.physicalMemory
-        let used = min(total, active + wired + speculative + compressor)
+        let cachedFiles = external + purgeable
+        // Include reclaimable file-backed/inactive cache in usedBytes so /usr/sbin/purge and VM pressure reclamation visibly drop used RAM
+        let rawUsed = active + inactive + wired + speculative + compressor
+        let used = min(total, rawUsed)
         let free = total > used ? total - used : 0
 
         return MemoryBreakdown(
@@ -252,6 +260,7 @@ public final class SystemTelemetryEngine: ObservableObject {
             activeBytes: active,
             wiredBytes: wired,
             compressedBytes: compressor,
+            cachedFilesBytes: cachedFiles,
             freeBytes: free,
             totalBytes: total
         )

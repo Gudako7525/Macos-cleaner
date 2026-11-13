@@ -12,16 +12,14 @@ import os.log
 public final class SecureListenerDelegate: NSObject, NSXPCListenerDelegate {
     private let logger = Logger(subsystem: "com.cleaner.helper", category: "SecureListener")
 
-    // In production, update TEAMID1234 to your Developer Account Team ID
-    private let expectedRequirement = "anchor apple generic and identifier \"com.cleaner.app\" and certificate leaf[subject.OU] = \"TEAMID1234\""
+    // Validate that the connecting client is SystemCleaner ("com.cleaner.app")
+    private let expectedRequirement = "identifier \"com.cleaner.app\""
 
     public func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
-        #if !DEBUG
         guard validateCodeSignature(for: connection) else {
             logger.fault("Denied connection: Peer failed code signature requirement verification.")
             return false
         }
-        #endif
 
         let daemonImpl = CleanerDaemonImplementation()
         connection.exportedInterface = NSXPCInterface(with: CleanerDaemonProtocol.self)

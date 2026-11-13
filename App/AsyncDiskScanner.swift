@@ -34,6 +34,13 @@ public actor AsyncDiskScanner {
         "com.apple.nsurlsessiond"
     ]
 
+    private static let excludedSystemCacheNames: Set<String> = [
+        "com.apple.kext.caches",
+        "com.apple.iconservices.store",
+        "com.apple.aned",
+        "com.apple.apfs"
+    ]
+
     public init() {}
 
     /// Performs asynchronous directory traversal using an AsyncStream for real-time progress streaming
@@ -153,6 +160,82 @@ public actor AsyncDiskScanner {
         var targetItems: [JunkItem] = []
 
         switch category {
+        case .systemJunk:
+            let systemDirs: [(dir: URL, excluded: Set<String>)] = [
+                (URL(fileURLWithPath: "/Library/Caches", isDirectory: true), Self.excludedSystemCacheNames),
+                (URL(fileURLWithPath: "/Library/Logs", isDirectory: true), ["DiagnosticReports"]),
+                (URL(fileURLWithPath: "/Library/Logs/DiagnosticReports", isDirectory: true), []),
+                (library.appendingPathComponent("Saved Application State", isDirectory: true), [])
+            ]
+            for entry in systemDirs {
+                targetItems.append(contentsOf: try scanTopLevelEntries(
+                    in: entry.dir,
+                    category: .systemJunk,
+                    excludedNames: entry.excluded,
+                    progressHandler: progressHandler
+                ))
+            }
+
+            // Include rotated / archived logs in /private/var/log (*.log, *.out, *.gz, *.bz2, *.asl)
+            let varLogDir = URL(fileURLWithPath: "/private/var/log", isDirectory: true)
+            if let children = try? fm.contentsOfDirectory(
+                at: varLogDir,
+                includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            ) {
+                let logExtensions: Set<String> = ["log", "out", "old", "gz", "bz2", "asl"]
+                for child in children {
+                    try Task.checkCancellation()
+                    let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .contentModificationDateKey, .isSymbolicLinkKey])
+                    if values?.isSymbolicLink == true { continue }
+                    let isDir = values?.isDirectory ?? false
+                    let ext = child.pathExtension.lowercased()
+                    let name = child.lastPathComponent.lowercased()
+                    guard isDir || logExtensions.contains(ext) || name.contains(".log.") else { continue }
+                    progressHandler(child.path)
+                    let size = Self.computeRecursiveSize(at: child)
+                    guard size > 0 else { continue }
+                    targetItems.append(JunkItem(
+                        url: child,
+                        category: .systemJunk,
+                        byteSize: size,
+                        modifiedDate: values?.contentModificationDate,
+                        isDirectory: isDir,
+                        isSelected: true
+                    ))
+                }
+            }
+
+            // Include stale user temporary folders (> 1 day old) in $TMPDIR
+            let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            let staleCutoff = Date().addingTimeInterval(-24 * 60 * 60)
+            if let tmpChildren = try? fm.contentsOfDirectory(
+                at: tmpDir,
+                includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey, .isSymbolicLinkKey],
+                options: [.skipsHiddenFiles]
+            ) {
+                var staleTempBytes: UInt64 = 0
+                for child in tmpChildren {
+                    try Task.checkCancellation()
+                    let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .contentModificationDateKey, .isSymbolicLinkKey])
+                    if values?.isSymbolicLink == true { continue }
+                    if let modDate = values?.contentModificationDate, modDate < staleCutoff {
+                        staleTempBytes += Self.computeRecursiveSize(at: child)
+                    }
+                }
+                if staleTempBytes > 0 {
+                    targetItems.append(JunkItem(
+                        url: tmpDir,
+                        name: "Temporary App Files ($TMPDIR)",
+                        category: .systemJunk,
+                        byteSize: staleTempBytes,
+                        modifiedDate: Date(),
+                        isDirectory: true,
+                        isSelected: true
+                    ))
+                }
+            }
+
         case .userCaches:
             let cachesDir = library.appendingPathComponent("Caches", isDirectory: true)
             let items = try scanTopLevelEntries(
@@ -164,13 +247,19 @@ public actor AsyncDiskScanner {
             targetItems.append(contentsOf: items)
 
         case .applicationLogs:
-            let logsDir = library.appendingPathComponent("Logs", isDirectory: true)
-            targetItems.append(contentsOf: try scanTopLevelEntries(
-                in: logsDir,
-                category: category,
-                excludedNames: [],
-                progressHandler: progressHandler
-            ))
+            let logDirs = [
+                library.appendingPathComponent("Logs", isDirectory: true),
+                library.appendingPathComponent("Logs/DiagnosticReports", isDirectory: true),
+                library.appendingPathComponent("Application Support/CrashReporter", isDirectory: true)
+            ]
+            for dir in logDirs {
+                targetItems.append(contentsOf: try scanTopLevelEntries(
+                    in: dir,
+                    category: category,
+                    excludedNames: ["DiagnosticReports"],
+                    progressHandler: progressHandler
+                ))
+            }
 
         case .browserCaches:
             let browserPaths: [(name: String, url: URL)] = [

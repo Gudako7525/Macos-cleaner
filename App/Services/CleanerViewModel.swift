@@ -413,25 +413,32 @@ public final class CleanerViewModel: ObservableObject {
 
     // MARK: - RAM Cleanup & Maintenance Actions
 
-    public func cleanRAM(allowAdminPrompt: Bool = true) async {
+    public func cleanRAM(allowAdminPrompt: Bool = false) async {
         guard !isCleaningRAM else { return }
         isCleaningRAM = true
         ramCleanupStatusMessage = "Optimizing RAM..."
         telemetry.refreshNow()
-        let beforeUsed = telemetry.snapshot.memory.usedBytes
+        let beforeMem = telemetry.snapshot.memory
 
-        // Release unused allocator memory in our own process first
-        malloc_zone_pressure_relief(nil, 0)
+        // Always perform fast, passwordless user-space VM pressure reclamation first
+        await MaintenanceService.reclaimUserSpaceMemory()
 
         var outcome = MaintenanceService.Outcome(success: true, message: "Memory optimized.")
-        if let purgeTask = MaintenanceTaskInfo.allTasks.first(where: { $0.id == MaintenanceRoutines.purgeRAM }) {
-            outcome = await MaintenanceService.run(purgeTask, allowAdminPromptFallback: allowAdminPrompt)
+        daemonManager.syncStatus()
+        if daemonManager.status == .enabled || allowAdminPrompt {
+            if let purgeTask = MaintenanceTaskInfo.allTasks.first(where: { $0.id == MaintenanceRoutines.purgeRAM }) {
+                outcome = await MaintenanceService.run(purgeTask, allowAdminPromptFallback: allowAdminPrompt)
+            }
         }
 
         try? await Task.sleep(nanoseconds: 300_000_000)
         telemetry.refreshNow()
-        let afterUsed = telemetry.snapshot.memory.usedBytes
-        let freed = beforeUsed > afterUsed ? beforeUsed - afterUsed : 0
+        let afterMem = telemetry.snapshot.memory
+
+        let usedDrop = beforeMem.usedBytes > afterMem.usedBytes ? (beforeMem.usedBytes - afterMem.usedBytes) : 0
+        let freeGain = afterMem.freeBytes > beforeMem.freeBytes ? (afterMem.freeBytes - beforeMem.freeBytes) : 0
+        let cacheDrop = beforeMem.cachedFilesBytes > afterMem.cachedFilesBytes ? (beforeMem.cachedFilesBytes - afterMem.cachedFilesBytes) : 0
+        let freed = max(usedDrop, max(freeGain, cacheDrop))
 
         lastFreedRAMBytes = freed
         ramCleanupLastSuccess = outcome.success
@@ -439,7 +446,7 @@ public final class CleanerViewModel: ObservableObject {
             if freed > 1_048_576 {
                 ramCleanupStatusMessage = "Freed \(ByteFormatter.formatMemory(freed)) of RAM"
             } else {
-                ramCleanupStatusMessage = "Inactive memory pages purged"
+                ramCleanupStatusMessage = "RAM optimized (inactive cache cleared)"
             }
         } else {
             ramCleanupStatusMessage = outcome.message

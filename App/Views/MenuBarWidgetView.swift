@@ -161,7 +161,7 @@ struct MenuBarWidgetView: View {
                 Spacer(minLength: 4)
 
                 Button {
-                    Task { await viewModel.cleanRAM(allowAdminPrompt: true) }
+                    Task { await viewModel.cleanRAM(allowAdminPrompt: false) }
                 } label: {
                     ZStack {
                         Circle()

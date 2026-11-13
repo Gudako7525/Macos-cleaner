@@ -11,29 +11,82 @@ import ServiceManagement
 
 public enum CleanActionService {
 
-    /// Moves URLs safely to the user's Trash. Returns detailed CleanResult.
+    /// Moves URLs safely to the user's Trash, or cleans stale temp items when given $TMPDIR.
     public static func moveToTrash(_ items: [(url: URL, knownSize: UInt64)]) async -> CleanResult {
-        await Task.detached(priority: .userInitiated) {
+        let userResult = await Task.detached(priority: .userInitiated) { () -> (removed: Int, freed: UInt64, failed: [(url: URL, knownSize: UInt64, reason: String)]) in
             let fm = FileManager.default
+            let tmpDirStandardized = (NSTemporaryDirectory() as NSString).standardizingPath
             var removed = 0
             var freed: UInt64 = 0
-            var failures: [CleanFailure] = []
+            var failed: [(url: URL, knownSize: UInt64, reason: String)] = []
 
             for item in items {
+                let standardized = (item.url.path as NSString).standardizingPath
+                guard fm.fileExists(atPath: standardized) else { continue }
+
+                // Special handling for the $TMPDIR container: remove stale child entries without deleting $TMPDIR itself
+                if standardized == tmpDirStandardized {
+                    let staleCutoff = Date().addingTimeInterval(-24 * 60 * 60)
+                    if let children = try? fm.contentsOfDirectory(
+                        at: item.url,
+                        includingPropertiesForKeys: [.contentModificationDateKey, .isSymbolicLinkKey],
+                        options: [.skipsHiddenFiles]
+                    ) {
+                        for child in children {
+                            let vals = try? child.resourceValues(forKeys: [.contentModificationDateKey, .isSymbolicLinkKey])
+                            if vals?.isSymbolicLink == true { continue }
+                            if let mod = vals?.contentModificationDate, mod < staleCutoff {
+                                let childSize = AsyncDiskScanner.computeRecursiveSize(at: child)
+                                if (try? fm.removeItem(at: child)) != nil {
+                                    freed += childSize
+                                }
+                            }
+                        }
+                        removed += 1
+                    }
+                    continue
+                }
+
+                let size = item.knownSize > 0 ? item.knownSize : AsyncDiskScanner.computeRecursiveSize(at: item.url)
                 do {
-                    guard fm.fileExists(atPath: item.url.path) else { continue }
-                    let size = item.knownSize > 0 ? item.knownSize : AsyncDiskScanner.computeRecursiveSize(at: item.url)
                     var trashedURL: NSURL?
                     try fm.trashItem(at: item.url, resultingItemURL: &trashedURL)
                     removed += 1
                     freed += size
                 } catch {
-                    failures.append(CleanFailure(url: item.url, reason: error.localizedDescription))
+                    // Fallback to direct user-level removal for cache/log directories that don't support .Trash
+                    if (try? fm.removeItem(at: item.url)) != nil {
+                        removed += 1
+                        freed += size
+                    } else {
+                        failed.append((item.url, size, error.localizedDescription))
+                    }
                 }
             }
 
-            return CleanResult(removedCount: removed, freedBytes: freed, failures: failures)
+            return (removed, freed, failed)
         }.value
+
+        guard !userResult.failed.isEmpty else {
+            return CleanResult(removedCount: userResult.removed, freedBytes: userResult.freed, failures: [])
+        }
+
+        // If any system-owned cache/log files failed to delete in user space, escalate via Privileged Helper if active
+        let daemonStatus = await MainActor.run { DaemonManager.shared.status }
+        if daemonStatus == .enabled {
+            let failedPaths = userResult.failed.map(\.url.path)
+            let xpcOutcome = await purgeViaHelper(paths: failedPaths)
+            if xpcOutcome.exitCode == 0 {
+                return CleanResult(
+                    removedCount: userResult.removed + failedPaths.count,
+                    freedBytes: userResult.freed + xpcOutcome.bytesPurged,
+                    failures: []
+                )
+            }
+        }
+
+        let failures = userResult.failed.map { CleanFailure(url: $0.url, reason: $0.reason) }
+        return CleanResult(removedCount: userResult.removed, freedBytes: userResult.freed, failures: failures)
     }
 
     /// Permanently deletes items (useful for Trash contents or items that cannot be moved to Trash).
